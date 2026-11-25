@@ -11,3 +11,6 @@ ref8/
 ref9/
 *.png
 *.webp
+# README screenshots are the exception
+!docs/*.png
+!docs/*.gif

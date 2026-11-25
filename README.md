@@ -6,6 +6,12 @@ It floats on your desktop, watches your cursor, reacts to what your Claude Code 
 
 This is an unofficial personal project. It is not made by, affiliated with, or endorsed by Anthropic.
 
+![The avatar slashing, doing a spinning cut, then saluting](docs/demo.gif)
+
+![Four states: idle, working, needs you, done](docs/moods.png)
+
+*Idle · Claude is working · Claude needs you · session finished.*
+
 ## What it does
 
 - **Reacts to Claude Code.** Hooks report every session's state to the avatar: working, waiting for you (with the project name and message in a speech bubble), finished, idle.
@@ -20,9 +26,11 @@ Also included:
 - **VRM Viewer**, a small local viewer for `.vrm` and `.glb` files.
 - **An experimental pipeline** that turns an uncoloured STL figure plus a few reference pictures into a textured, rigged VRM.
 
+![The chat popup beside the avatar](docs/chat.png)
+
 ## No character model is included
 
-The repository contains code only. It ships no 3D model, texture, or reference art. Without a model, the avatar uses its built-in 2D character, which is original to this project.
+The repository contains code only. It ships no 3D model, texture, or reference art. The screenshots show the author's own setup with a fan-made model of a character that belongs to its rights holders; that model is not distributed here. Without a model, the avatar uses its built-in 2D character, which is original to this project.
 
 To use a 3D avatar, supply your own VRM file. Make sure you have the right to use it.
 
@@ -119,6 +127,8 @@ Models without these simply skip those behaviours.
 ```sh
 vrm-viewer path/to/model.vrm
 ```
+
+![The viewer showing a model with its details panel](docs/viewer.png)
 
 Drag to rotate, right-drag to pan, wheel to zoom, double-click to reset. The side panel shows format, triangle count, bones and expressions, with toggles for head tracking, idle motion, turntable and skeleton display. You can also drop a file onto the window.
 
