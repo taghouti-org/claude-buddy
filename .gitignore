@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+# models, meshes and reference art are not part of this repository
+*.vrm
+*.glb
+*.stl
+*.npy
+*.npz
+refs/
+ref8/
+ref9/
+*.png
+*.webp

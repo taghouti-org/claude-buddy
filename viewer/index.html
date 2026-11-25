@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>VRM Viewer</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1c1d21;
+               font: 13px/1.45 system-ui, sans-serif; color: #e8e6e1; }
+  canvas { display: block; }
+  #panel { position: fixed; top: 12px; left: 12px; background: rgba(20, 20, 23, .82);
+           border: 1px solid #3a3b40; border-radius: 10px; padding: 10px 12px; min-width: 190px;
+           max-width: 300px; }
+  #panel h1 { margin: 0 0 4px; font-size: 14px; color: #f0a37f; overflow-wrap: anywhere; }
+  #info { color: #a9a7a2; margin-bottom: 8px; white-space: pre-line; font-variant-numeric: tabular-nums; }
+  label { display: block; cursor: pointer; padding: 2px 0; }
+  input[type=checkbox] { accent-color: #f0a37f; }
+  #hint { position: fixed; bottom: 10px; left: 0; right: 0; text-align: center; color: #85837f; }
+  #err { color: #ff8f7d; white-space: pre-wrap; overflow-wrap: anywhere; }
+  body.drop::after { content: "Drop the .vrm / .glb here"; position: fixed; inset: 12px;
+                     border: 2px dashed #f0a37f; border-radius: 14px; display: grid;
+                     place-items: center; font-size: 20px; background: rgba(0, 0, 0, .45); }
+</style>
+<script type="importmap">
+{ "imports": { "three": "./lib/three.module.min.js",
+               "three/addons/": "./lib/jsm/",
+               "@pixiv/three-vrm": "./lib/three-vrm.module.min.js" } }
+</script>
+</head>
+<body>
+<div id="panel">
+  <h1 id="name">No model</h1>
+  <div id="info">Open a file or drop one here.</div>
+  <label><input type="checkbox" id="follow" checked> Head follows the mouse</label>
+  <label><input type="checkbox" id="idle" checked> Idle motion</label>
+  <label><input type="checkbox" id="spin"> Turntable</label>
+  <label><input type="checkbox" id="bones"> Show skeleton</label>
+  <div id="err"></div>
+</div>
+<div id="hint">Drag: rotate · Right-drag: pan · Wheel: zoom · Double-click: reset view</div>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+
+const $ = (id) => document.getElementById(id);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1c1d21);
+const camera = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 0.01, 100);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x555560, 2.2));
+const sun = new THREE.DirectionalLight(0xffffff, 3.2);
+sun.position.set(-1.2, 2.2, 2.4);
+scene.add(sun);
+const rim = new THREE.DirectionalLight(0xaac4ff, 2.0); rim.position.set(1.8, 1.4, -1.6); scene.add(rim);
+const grid = new THREE.GridHelper(4, 16, 0x4a4b52, 0x2c2d32);
+scene.add(grid);
+
+let current = null;   // { root, vrm, helper, size, center }
+const mouse = new THREE.Vector2();
+const look = new THREE.Vector2();
+
+function frame() {
+  if (!current) { camera.position.set(0, 1, 4); controls.target.set(0, 0.8, 0); return; }
+  const { size, center } = current;
+  const fit = Math.max(size.y, size.x / camera.aspect) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+  controls.target.copy(center);
+  camera.position.set(center.x, center.y + size.y * 0.08, center.z + fit * 1.35 + size.z);
+  controls.update();
+}
+
+function show(gltf, label) {
+  if (current) {
+    scene.remove(current.root);
+    if (current.helper) scene.remove(current.helper);
+    if (current.vrm) VRMUtils.deepDispose(current.vrm.scene);
+  }
+  const vrm = gltf.userData.vrm || null;
+  const root = vrm ? vrm.scene : gltf.scene;
+  if (vrm) VRMUtils.rotateVRM0(vrm);            // VRM 0.x faces the other way
+  let tris = 0, verts = 0, skinned = 0, bones = 0;
+  root.traverse((o) => {
+    o.frustumCulled = false;
+    if (o.isMesh) {
+      verts += o.geometry.attributes.position.count;
+      tris += (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3;
+      if (o.isSkinnedMesh) { skinned++; bones = Math.max(bones, o.skeleton.bones.length); }
+    }
+  });
+  scene.add(root);
+  const box = new THREE.Box3().setFromObject(root);
+  const helper = new THREE.SkeletonHelper(root);
+  helper.visible = $('bones').checked;
+  scene.add(helper);
+  current = { root, vrm, helper, size: box.getSize(new THREE.Vector3()), center: box.getCenter(new THREE.Vector3()) };
+  const meta = vrm && vrm.meta ? vrm.meta : {};
+  $('name').textContent = meta.name || meta.title || label;
+  const kind = vrm ? 'VRM ' + (meta.metaVersion === '0' ? '0.x' : '1.0') : 'glTF (no VRM data)';
+  const human = vrm && vrm.humanoid ? Object.keys(vrm.humanoid.humanBones).length : 0;
+  $('info').textContent =
+    `${kind}\n${Math.round(tris).toLocaleString()} triangles · ${verts.toLocaleString()} vertices\n` +
+    `${bones} bones` + (human ? ` (${human} humanoid)` : '') +
+    `\nHeight ${current.size.y.toFixed(2)} m` +
+    (vrm && vrm.expressionManager ? `\n${vrm.expressionManager.expressions.length} expressions` : '\nNo expressions');
+  $('err').textContent = '';
+  frame();
+  reviewView();
+}
+
+// Review mode: ?view=…&hide=1&pose=armsout,headturn,scarfup&blades=0&only=blades : fixed camera and pose for inspecting a model
+let reviewing = false;
+function reviewView() {
+  const q = new URLSearchParams(location.search), v = q.get('view');
+  if (!v || !current) return;
+  reviewing = true;
+  $('follow').checked = false; $('idle').checked = false;
+  if (q.get('hide')) { $('panel').style.display = 'none'; $('hint').style.display = 'none'; grid.visible = false; }
+  const { vrm, root, size, center } = current, h = size.y;
+  const bone = (n) => vrm && vrm.humanoid ? vrm.humanoid.getNormalizedBoneNode(n) : null;
+  const poses = (q.get('pose') || '').split(',');
+  const set = (n, x, y, z) => { const b = bone(n); if (b) b.rotation.set(x, y, z); };
+  if (poses.includes('armsout')) { set('rightUpperArm', 0, 0, -1.25); set('leftUpperArm', 0, 0, 1.25); }
+  if (poses.includes('armsup')) { set('rightUpperArm', 0, 0, -2.0); set('leftUpperArm', 0, 0, 2.0); }
+  if (poses.includes('armsfwd')) { set('rightUpperArm', -1.2, 0, -0.3); set('leftUpperArm', -1.2, 0, 0.3); }
+  if (poses.includes('headturn')) { set('head', 0.1, 0.6, 0); set('neck', 0, 0.15, 0); }
+  if (poses.includes('headup')) { set('head', -0.4, 0, 0); }
+  const scarf = root.getObjectByName('Scarf');
+  if (scarf && poses.includes('scarfup')) { scarf.position.y += 0.035; scarf.rotation.x = -0.1; }
+  if (q.get('blades') === '0') for (const n of ['BladeL', 'BladeR']) { const m = root.getObjectByName(n); if (m) m.visible = false; }
+  if (q.get('only') === 'blades') for (const n of ['Body', 'Hair']) { const m = root.getObjectByName(n); if (m) m.visible = false; }
+  if (vrm) vrm.update(0);
+  root.updateMatrixWorld(true);
+  const wp = (n) => { const b = vrm.humanoid.getRawBoneNode(n); return b.getWorldPosition(new THREE.Vector3()); };
+  const dirs = { front: [0, 0, 1], back: [0, 0, -1], left: [1, 0, 0], right: [-1, 0, 0], top: [0, 1, 0.001], q3: [0.7, 0.1, 0.7], q3b: [-0.7, 0.1, 0.7] };
+  let tgt = center.clone(), span = h * 1.08, d = dirs.front;
+  if (v === 'face') { tgt.set(center.x, h * 0.74, 0); span = h * 0.52; }
+  else if (v === 'top') { tgt.set(center.x, h * 0.8, 0); span = h * 0.7; d = dirs.top; }
+  else if (v === 'hips') { tgt.set(center.x, h * 0.3, 0); span = h * 0.55; }
+  else if (v === 'hipsback') { tgt.set(center.x, h * 0.3, 0); span = h * 0.55; d = dirs.back; }
+  else if (v === 'handL' || v === 'handR') { tgt.copy(wp(v === 'handL' ? 'leftHand' : 'rightHand')); span = h * 0.22; d = [v === 'handL' ? 0.5 : -0.5, 0.2, 1]; }
+  else if (v === 'handLb' || v === 'handRb') { tgt.copy(wp(v === 'handLb' ? 'leftHand' : 'rightHand')); span = h * 0.22; d = [v === 'handLb' ? 0.8 : -0.8, 0.1, -0.7]; }
+  else if (v === 'neck') { tgt.set(center.x, h * 0.56, 0); span = h * 0.3; }
+  else if (v === 'neckside') { tgt.set(center.x, h * 0.56, 0); span = h * 0.3; d = dirs.left; }
+  else if (v === 'neckback') { tgt.set(center.x, h * 0.56, 0); span = h * 0.3; d = dirs.back; }
+  else if (v === 'upper') { tgt.set(center.x, h * 0.45, 0); span = h * 0.75; }
+  else if (v === 'upperback') { tgt.set(center.x, h * 0.45, 0); span = h * 0.75; d = dirs.back; }
+  else if (dirs[v]) d = dirs[v];
+  const dv = new THREE.Vector3().fromArray(d).normalize();
+  const dist = span / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+  controls.target.copy(tgt); camera.position.copy(tgt).addScaledVector(dv, dist); controls.update();
+  document.title = 'VRM Viewer review ' + v;
+}
+const loader = new GLTFLoader();
+loader.register((parser) => new VRMLoaderPlugin(parser));
+function fail(e) { $('err').textContent = 'Could not load: ' + (e && e.message ? e.message : e); console.error(e); }
+window.loadModel = (url, label) => loader.load(url, (g) => show(g, label || 'Model'), undefined, fail);
+window.loadBuffer = (buf, label) => loader.parse(buf, '', (g) => show(g, label), fail);
+
+addEventListener('dragover', (e) => { e.preventDefault(); document.body.classList.add('drop'); });
+addEventListener('dragleave', () => document.body.classList.remove('drop'));
+addEventListener('drop', async (e) => {
+  e.preventDefault();
+  document.body.classList.remove('drop');
+  const file = e.dataTransfer.files[0];
+  if (file) loadBuffer(await file.arrayBuffer(), file.name);
+});
+addEventListener('pointermove', (e) => mouse.set(e.clientX / innerWidth * 2 - 1, e.clientY / innerHeight * 2 - 1));
+addEventListener('dblclick', frame);
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+$('bones').addEventListener('change', (e) => { if (current && current.helper) current.helper.visible = e.target.checked; });
+
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = clock.getDelta(), t = clock.elapsedTime;
+  if (current) {
+    const { vrm, root } = current;
+    if ($('spin').checked) root.rotation.y += dt * 0.6;
+    if (vrm && reviewing) vrm.update(0);
+    else if (vrm && vrm.humanoid) {
+      const bone = (n) => vrm.humanoid.getNormalizedBoneNode(n);
+      const follow = $('follow').checked;
+      look.x += ((follow ? mouse.x : 0) - look.x) * Math.min(1, dt * 6);
+      look.y += ((follow ? mouse.y : 0) - look.y) * Math.min(1, dt * 6);
+      const idle = $('idle').checked ? 1 : 0;
+      const head = bone('head'), neck = bone('neck'), chest = bone('chest') || bone('spine'), hips = bone('hips');
+      if (head) head.rotation.set(look.y * 0.35 + idle * Math.sin(t * 1.1) * 0.02, look.x * 0.55, idle * Math.sin(t * 0.7) * 0.03);
+      if (neck) neck.rotation.set(look.y * 0.1, look.x * 0.15, 0);
+      if (chest) chest.rotation.set(idle * Math.sin(t * 1.8) * 0.012, look.x * 0.12, 0);
+      if (hips) hips.rotation.set(0, look.x * 0.06, idle * Math.sin(t * 0.9) * 0.012);
+      vrm.update(dt);
+    }
+  }
+  controls.update();
+  renderer.render(scene, camera);
+});
+
+frame();
+const initial = new URLSearchParams(location.search).get('model');
+if (initial) loadModel('/model?' + Date.now(), initial);
+</script>
+</body>
+</html>

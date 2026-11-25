@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Claude Buddy</title>
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent;
+               user-select: none; -webkit-user-select: none; cursor: default; }
+  canvas { position: absolute; inset: 0; display: block; transition: filter .8s; }
+  body.sleep canvas { filter: brightness(.72) saturate(.8); }
+  #shadow { position: absolute; left: 50%; bottom: 6px; width: 120px; height: 20px; margin-left: -60px;
+            background: radial-gradient(closest-side, rgba(0,0,0,.34), rgba(0,0,0,0)); }
+  #cable { left: 50%; top: 46%; width: 240px; height: 2px; transform-origin: 0 50%;
+           background: linear-gradient(90deg, rgba(230,230,235,.95), rgba(230,230,235,0)); transition: none; }
+  .fx { position: absolute; pointer-events: none; opacity: 0; transition: opacity .25s; }
+  #badge { right: 62px; top: 52px; width: 26px; height: 26px; border-radius: 50%; background: #e63a33;
+           color: #fff; font: 800 19px/26px system-ui, sans-serif; text-align: center;
+           box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+  body.attention #badge { opacity: 1; animation: bob .4s ease-in-out infinite alternate; }
+  @keyframes bob { to { transform: translateY(-5px); } }
+  #spark { left: 50%; top: 58px; width: 0; height: 0; }
+  body.busy #spark { opacity: 1; }
+  #spark i { position: absolute; left: -9px; top: -9px; width: 18px; height: 18px; background: #ffdb8c;
+             clip-path: polygon(50% 0, 60% 40%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0 50%, 40% 40%);
+             animation: spin 1.6s linear infinite; }
+  #spark b { position: absolute; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: #ffdb8c;
+             animation: orbit 1.5s linear infinite; }
+  #spark b:nth-child(3) { animation-delay: -.5s; opacity: .75; }
+  #spark b:nth-child(4) { animation-delay: -1s; opacity: .5; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes orbit { from { transform: rotate(0) translateX(22px) scaleY(.5); } to { transform: rotate(360deg) translateX(22px) scaleY(.5); } }
+  #zzz { right: 58px; top: 70px; color: #f2e6d9; font: 700 15px system-ui, sans-serif; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
+  body.sleep #zzz { opacity: 1; }
+  #zzz span { position: absolute; animation: float 3s linear infinite; opacity: 0; }
+  #zzz span:nth-child(2) { animation-delay: -1s; } #zzz span:nth-child(3) { animation-delay: -2s; }
+  @keyframes float { 0% { transform: translate(0, 0) scale(.6); opacity: 0; } 30% { opacity: .95; }
+                     100% { transform: translate(26px, -44px) scale(1.5); opacity: 0; } }
+  #stars { inset: 0; }
+  body.happy #stars { opacity: 1; }
+  #stars i { position: absolute; width: 13px; height: 13px; background: #ffdb8c;
+             clip-path: polygon(50% 0, 60% 40%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0 50%, 40% 40%);
+             animation: twinkle .9s ease-in-out infinite alternate; }
+  @keyframes twinkle { from { transform: scale(.4) rotate(0); } to { transform: scale(1.2) rotate(90deg); } }
+</style>
+<script type="importmap">
+{ "imports": { "three": "./lib/three.module.min.js", "three/addons/": "./lib/jsm/",
+               "@pixiv/three-vrm": "./lib/three-vrm.module.min.js" } }
+</script>
+</head>
+<body>
+<div id="shadow"></div>
+<div id="cable" class="fx"></div>
+<div id="spark" class="fx"><i></i><b></b><b></b><b></b></div>
+<div id="badge" class="fx">!</div>
+<div id="zzz" class="fx"><span>z</span><span>z</span><span>z</span></div>
+<div id="stars" class="fx">
+  <i style="left:16%;top:30%"></i><i style="left:80%;top:26%;animation-delay:-.3s"></i>
+  <i style="left:10%;top:58%;animation-delay:-.5s"></i><i style="left:86%;top:55%;animation-delay:-.7s"></i>
+  <i style="left:48%;top:8%;animation-delay:-.2s"></i>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setClearColor(0x000000, 0);
+renderer.setPixelRatio(2);                       // supersample: the window is small, keep it crisp
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.add(new THREE.HemisphereLight(0xffffff, 0x666670, 2.4));
+// the hair is a glossy lit material: a key light and a cool rim give it highlights that move with her
+const key = new THREE.DirectionalLight(0xffffff, 3.2); key.position.set(-1.2, 2.2, 2.4); scene.add(key);
+const rim = new THREE.DirectionalLight(0xaac4ff, 2.0); rim.position.set(1.8, 1.4, -1.6); scene.add(rim);
+// frame: feet at the bottom, room above the head for hops and badges
+const VIEW_H = 1.4, VIEW_Y = 0.63, FOV = 20;
+const camera = new THREE.PerspectiveCamera(FOV, innerWidth / innerHeight, 0.1, 50);
+camera.position.set(0, VIEW_Y + 0.12, (VIEW_H / 2) / Math.tan(THREE.MathUtils.degToRad(FOV / 2)));
+camera.lookAt(0, VIEW_Y, 0);
+
+let vrm = null, root = null, B = {}, blades = [], ground = null, scarfBone = null, scarfRest = null;
+function setArmed(v) {
+  if (!blades.length) return;
+  S.armed = v; S.unarmedT = 0; for (const b of blades) b.visible = v; ground.visible = !v;
+}
+const S = { mood: 'idle', moodT: 0, look: new THREE.Vector2(), target: new THREE.Vector2(), yaw: 0,
+            action: null, nextAction: 6, walk: 0, rate: 0, phase: 0, armed: true, unarmedT: 0, fly: null, queue: [] };
+const ACTIONS = { hop: 0.7, spin: 1.1, flourish: 1.6, lookaround: 2.4, nod: 0.9, stretch: 1.5, sway: 2.2,
+                  slash: 1.3, dance: 3.6, bow: 1.8, victory: 2.0, guard: 2.2, jumpspin: 1.2,
+                  salute: 2.8, scarf: 2.6, napecut: 1.5, bladecheck: 2.8, land: 0.75, landsoft: 0.45,
+                  disarm: 2.0, arm: 2.0, punch: 1.3, kick: 1.2, squats: 2.8, crossarms: 2.8, wave: 1.9 };
+// what she does on her own: quiet, watchful, always tending the scarf and the blades
+const IDLE_POOL = ['scarf', 'scarf', 'scarf', 'lookaround', 'lookaround', 'bladecheck', 'bladecheck', 'guard', 'slash',
+                   'napecut', 'salute', 'stretch', 'nod', 'flourish', 'disarm'];
+// blades on the ground: training and resting
+const UNARMED_POOL = ['punch', 'punch', 'kick', 'kick', 'squats', 'crossarms', 'stretch', 'scarf', 'lookaround', 'wave', 'hop'];
+const ARMED_ONLY = ['slash', 'napecut', 'bladecheck', 'flourish', 'guard'];
+// anything she does with her hands: the blades go down first
+const HANDS_FREE = ['scarf', 'salute', 'crossarms', 'wave', 'punch', 'kick', 'squats', 'stretch', 'bow'];
+const hold = (p, a = 0.2) => ease(Math.max(0, Math.min(1, p / a, (1 - p) / a)));   // 0 → 1 … 1 → 0
+const ease = (x) => x * x * (3 - 2 * x);
+const bump = (p) => Math.sin(Math.PI * Math.min(Math.max(p, 0), 1));          // 0 → 1 → 0
+
+function start(name) { S.action = { name, t: 0, dur: ACTIONS[name] }; }
+function request(name) {                                  // start an action, changing what is in her hands first if needed
+  if (!ACTIONS[name]) return;
+  if (S.armed && HANDS_FREE.includes(name)) { S.queue = [name]; start('disarm'); }
+  else if (!S.armed && ARMED_ONLY.includes(name)) { S.queue = [name]; start('arm'); }
+  else { S.queue = []; start(name); }
+}
+window.B = {
+  mood(m) { if (m !== S.mood) { S.mood = m; S.moodT = 0; S.action = null; S.queue = []; document.body.className = m; } },
+  look(x, y) { S.target.set(Math.max(-1, Math.min(1, x)), Math.max(-1, Math.min(1, y))); },
+  poke() { S.queue = []; start(Math.random() < 0.5 ? 'hop' : 'spin'); },
+  act(name) {
+    if (name === 'blades') name = S.armed ? 'disarm' : 'arm';
+    request(name);
+  },
+  jump(dir, dur) { if (!S.armed) setArmed(true); S.fly = dur > 0 ? { dir, t: 0, dur, kind: 'jump' } : null; S.action = null; S.walk = 0; S.rate = 0; },
+  walk(dir, rate) { S.walk = dir; S.rate = rate; if (rate > 0) { S.action = null; if (!S.armed) setArmed(true); } },
+  actions() { return Object.keys(ACTIONS); },
+  fly(dir, dur) { if (!S.armed) setArmed(true); S.fly = dur > 0 ? { dir, t: 0, dur, kind: 'odm' } : null; S.action = null; S.walk = 0; S.rate = 0; },
+};
+
+new GLTFLoader().register((p) => new VRMLoaderPlugin(p)).load('/model', (gltf) => {
+  vrm = gltf.userData.vrm;
+  root = vrm ? vrm.scene : gltf.scene;
+  if (vrm) VRMUtils.rotateVRM0(vrm);
+  root.traverse((o) => { o.frustumCulled = false; });
+  scene.add(root);
+  if (vrm && vrm.humanoid) {
+    for (const n of ['hips', 'spine', 'chest', 'neck', 'head', 'leftUpperArm', 'rightUpperArm', 'leftLowerArm',
+                     'rightLowerArm', 'leftUpperLeg', 'rightUpperLeg', 'leftLowerLeg', 'rightLowerLeg'])
+      B[n] = vrm.humanoid.getNormalizedBoneNode(n);
+  }
+  scarfBone = root.getObjectByName('Scarf') || null;      // the scarf is its own part with its own bone
+  if (scarfBone) scarfRest = scarfBone.position.clone();
+  // the blades are separate meshes: keep a still copy of each lying on the ground for when she puts them down
+  ground = new THREE.Group(); ground.visible = false; scene.add(ground);
+  for (const [name, sx] of [['BladeL', 1], ['BladeR', -1]]) {
+    const m = root.getObjectByName(name);
+    if (!m || !m.userData.centre) continue;
+    blades.push(m);
+    const still = new THREE.Mesh(m.geometry, m.material); still.frustumCulled = false;
+    still.position.fromArray(m.userData.centre).multiplyScalar(-1);
+    const pivot = new THREE.Group();
+    pivot.quaternion.setFromUnitVectors(new THREE.Vector3().fromArray(m.userData.axis).normalize(), new THREE.Vector3(sx, 0, 0.3).normalize());
+    pivot.position.set(sx * 0.2, 0.025, 0.2 + (sx > 0 ? 0.05 : 0));
+    pivot.add(still); ground.add(pivot);
+  }
+  document.title = 'ready';
+}, undefined, (e) => { console.error('avatar load failed', e); document.title = 'error'; });
+
+const shadow = document.getElementById('shadow');
+const clock = new THREE.Clock();
+let acc = 0, t = 0;
+function tick() {
+  requestAnimationFrame(tick);
+  const raw = Math.min(clock.getDelta(), 0.1);
+  acc += raw;
+  const step = S.mood === 'sleep' ? 1 / 10 : 1 / 30;      // be gentle on the GPU
+  if (acc < step) return;
+  const dt = acc; acc = 0; t += dt; S.moodT += dt;
+  if (!root) return;
+  const m = S.mood;
+
+  // ---- what to look at
+  if (!S.armed && (m === 'busy' || m === 'attention')) setArmed(true);   // work to do: blades back in hand
+  if (!S.armed) S.unarmedT += dt;
+  let tx = S.target.x, ty = S.target.y;
+  if (m === 'sleep') { tx = 0; ty = 0; }
+  if (m === 'busy') { tx = tx * 0.4 + Math.sin(t * 1.3) * 0.25; ty = ty * 0.4 - 0.25; }
+  const k = Math.min(1, dt * 7);
+  S.look.x += (tx - S.look.x) * k; S.look.y += (ty - S.look.y) * k;
+
+  // ---- pose channels (all start neutral every frame)
+  let hop = 0, spin = 0, lean = 0, headYaw = S.look.x * 0.42, headPitch = S.look.y * 0.38, headRoll = 0;
+  let armR = { x: 0, z: 0 }, armL = { x: 0, z: 0 }, foreR = 0, foreL = 0, legs = 0, bodyPitch = 0;
+  let legR = 0, legL = 0, kneeR = 0, kneeL = 0, twist = 0, crouch = 0, foreRz = 0, foreLz = 0, flyK = 0, front = 0, scarfLift = 0;
+  const walking = S.rate > 0 && m === 'idle';
+  const breathe = Math.sin(t * (m === 'sleep' ? 1.1 : 1.9));
+  armR.z = -0.03 - breathe * 0.015; armL.z = 0.03 + breathe * 0.015;
+  headRoll = Math.sin(t * 0.7) * 0.012;
+
+  if (m === 'busy') {                                       // sparring while Claude works
+    const a = Math.sin(t * 5.2), b = Math.sin(t * 5.2 + Math.PI);
+    armR.x = -0.55 * Math.max(0, a); armL.x = -0.55 * Math.max(0, b);
+    foreR = -0.35 * Math.max(0, a); foreL = -0.35 * Math.max(0, b);
+    hop = Math.abs(Math.sin(t * 5.2)) * 0.018; lean = Math.sin(t * 2.6) * 0.04;
+  } else if (m === 'attention') {                           // waving a sword for you
+    hop = Math.abs(Math.sin(t * 5)) * 0.075; legs = hop * 5;
+    armR.z = -1.9 + Math.sin(t * 11) * 0.22; armR.x = -0.2; headRoll += Math.sin(t * 5) * 0.05;
+  } else if (m === 'happy') {
+    // done: fist over the heart, other arm behind the back
+    if (S.armed) {                                         // quick dip to drop the blades, then the salute
+      const d = bump(Math.min(S.moodT / 0.4, 1)); crouch = 0.05 * d; bodyPitch = 0.35 * d; armR.x = -0.5 * d; armL.x = -0.5 * d;
+      if (S.moodT > 0.2) setArmed(false);
+    }
+    const h = S.armed ? 0 : ease(Math.min((S.moodT - 0.2) / 0.35, 1)); front = h; headYaw *= 1 - h;
+    armR.x = -0.55 * h; foreRz = 1.9 * h; armL.x = 0.55 * h; foreLz = -1.1 * h; headPitch -= 0.12 * h;
+    hop = bump(Math.min(S.moodT / 0.3, 1)) * 0.03;
+  } else if (m === 'sleep') {
+    const p = ease(Math.min(S.moodT / 1.5, 1));
+    headPitch = 0.42 * p + breathe * 0.02; headYaw = 0; headRoll = 0.08 * p; bodyPitch = 0.05 * p;
+  } else {                                                  // idle: now and then do something
+    S.nextAction -= dt;
+    if (!S.action && !walking && S.nextAction <= 0) {
+      const pool = S.armed ? IDLE_POOL : UNARMED_POOL;
+      if (!S.armed && S.unarmedT > 55) start('arm'); else request(pool[Math.floor(Math.random() * pool.length)]);
+      S.nextAction = S.armed ? 9 + Math.random() * 14 : 4 + Math.random() * 6;
+    }
+  }
+  if (S.action) {
+    const a = S.action; a.t += dt; const p = a.t / a.dur, b = bump(p);
+    if (a.name === 'hop') { hop = Math.abs(Math.sin(p * Math.PI * 2)) * 0.11 * (1 - p * 0.4); legs = hop * 4; }
+    else if (a.name === 'spin') { spin = ease(Math.min(p, 1)) * Math.PI * 2; hop = b * 0.05; }
+    else if (a.name === 'flourish') { armR.z = -1.7 * b; armR.x = -0.5 * Math.sin(p * Math.PI * 3) * b; foreR = -0.4 * b; headYaw -= 0.25 * b; }
+    else if (a.name === 'lookaround') { headYaw = Math.sin(p * Math.PI * 2) * 0.7; headPitch = -0.08; lean = Math.sin(p * Math.PI * 2) * 0.05; }
+    else if (a.name === 'nod') { headPitch += Math.sin(p * Math.PI * 4) * 0.22 * (1 - p); }
+    else if (a.name === 'stretch') { armR.z = -1.25 * b; armL.z = 1.25 * b; headPitch -= 0.25 * b; hop = b * 0.015; }
+    else if (a.name === 'sway') { lean = Math.sin(p * Math.PI * 4) * 0.09 * b; headRoll += Math.sin(p * Math.PI * 4) * 0.08 * b; }
+    else if (a.name === 'slash') {                       // wind up, then cut across
+      const w = Math.min(p / 0.45, 1), c = Math.max(0, (p - 0.45) / 0.3), out = Math.max(0, (p - 0.75) / 0.25);
+      armR.z = -1.9 * ease(w) * (1 - ease(Math.min(c, 1))) - 0.3 * bump(c); armR.x = -1.3 * ease(Math.min(c, 1)) * (1 - out);
+      foreR = -0.5 * bump(c); twist = (0.35 * ease(w) - 0.8 * ease(Math.min(c, 1))) * (1 - out); crouch = 0.03 * bump(c);
+    }
+    else if (a.name === 'dance') {
+      const beat = p * Math.PI * 10; hop = Math.abs(Math.sin(beat)) * 0.05 * b; legs = hop * 3;
+      twist = Math.sin(beat / 2) * 0.55 * b; lean = Math.sin(beat / 2) * 0.07 * b;
+      armR.z = -(0.7 + 0.7 * Math.max(0, Math.sin(beat / 2))) * b; armL.z = (0.7 + 0.7 * Math.max(0, -Math.sin(beat / 2))) * b;
+      headRoll += Math.sin(beat / 2) * 0.12 * b;
+    }
+    else if (a.name === 'bow') { bodyPitch = 0.5 * b; headPitch += 0.25 * b; armR.x = 0.25 * b; armL.x = 0.25 * b; }
+    else if (a.name === 'victory') {
+      armR.z = -2.0 * b; armL.z = 2.0 * b; hop = Math.abs(Math.sin(p * Math.PI * 5)) * 0.07 * b; legs = hop * 4; headPitch -= 0.2 * b;
+    }
+    else if (a.name === 'guard') {
+      armR.x = -1.15 * b; armL.x = -1.15 * b; armR.z = 0.35 * b; armL.z = -0.35 * b; foreR = -0.3 * b; foreL = -0.3 * b;
+      crouch = 0.035 * b; lean = Math.sin(p * Math.PI * 6) * 0.02;
+    }
+    else if (a.name === 'jumpspin') { hop = b * 0.2; spin = ease(Math.min(p, 1)) * Math.PI * 4; legs = b * 0.7; armR.z = -1.0 * b; armL.z = 1.0 * b; }
+    else if (a.name === 'salute') {
+      const h = hold(p); front = h; armR.x = -0.55 * h; foreRz = 1.9 * h; armL.x = 0.55 * h; foreLz = -1.1 * h; headPitch -= 0.12 * h; headYaw *= 1 - h;
+    }
+    else if (a.name === 'scarf') {                         // hand up to the scarf, chin tucked in
+      const h = hold(p, 0.25); scarfLift = h; front = 0.8 * h; headYaw *= 1 - 0.6 * h; armR.x = -0.95 * h; foreRz = 2.25 * h; headPitch += 0.2 * h; headRoll += 0.04 * h;
+      foreR = Math.sin(p * Math.PI * 6) * 0.06 * h;
+    }
+    else if (a.name === 'bladecheck') {                    // lift a blade and inspect the edge
+      const h = hold(p); front = 0.7 * h; armR.x = -1.1 * h; armR.z = -0.25 * h; foreR = -0.5 * h; foreRz = Math.sin(p * Math.PI * 4) * 0.3 * h;
+      headYaw = headYaw * (1 - h) - 0.45 * h; headPitch = headPitch * (1 - h) + 0.15 * h;
+    }
+    else if (a.name === 'napecut') {                       // crouch, leap, three spinning cuts, land
+      const q = Math.max(0, Math.min(1, (p - 0.2) / 0.65)), ext = Math.max(0, Math.min(1, q * 4, (1 - q) * 4));
+      crouch = p < 0.2 ? 0.045 * bump(p / 0.2) : (p > 0.85 ? 0.04 * bump((p - 0.85) / 0.15) : 0);
+      hop = bump(q) * 0.22; spin = ease(q) * Math.PI * 6; legs = bump(q) * 0.6;
+      armR.z = -1.4 * ext; armL.z = 1.4 * ext; bodyPitch = 0.25 * ext;
+    }
+    else if (a.name === 'disarm' || a.name === 'arm') {     // bend down, lay the blades at her feet / take them up
+      const k = hold(p, 0.35); front = k; bodyPitch = 0.62 * k; crouch = 0.06 * k; armR.x = -0.75 * k; armL.x = -0.75 * k;
+      armR.z = -0.25 * k; armL.z = 0.25 * k; headPitch += 0.3 * k; headYaw *= 1 - k;
+      if (p >= 0.5 && S.armed === (a.name === 'disarm')) setArmed(a.name === 'arm');
+      if (a.name === 'arm' && p > 0.7) { const u = bump((p - 0.7) / 0.3); armR.z -= 1.1 * u; armL.z += 1.1 * u; }
+    }
+    else if (a.name === 'punch') {                         // jab, cross
+      const j1 = bump(p / 0.4), j2 = bump((p - 0.45) / 0.45);
+      armR.x = -1.5 * j1 - 0.5; foreRz = 1.4 * (1 - j1); armL.x = -1.5 * j2 - 0.5; foreLz = -1.4 * (1 - j2);
+      twist = 0.3 * j1 - 0.3 * j2; crouch = 0.02; front = 0.5;
+    }
+    else if (a.name === 'kick') {                          // high front kick, guard up
+      const k = hold(p, 0.3); legR = -1.45 * k; kneeR = 0.5 * bump(p / 0.3) * (p < 0.3 ? 1 : 0); bodyPitch = -0.18 * k;
+      armR.x = -0.9 * k; foreRz = 1.6 * k; armL.x = -0.9 * k; foreLz = -1.6 * k; twist = 0.25 * k;
+    }
+    else if (a.name === 'squats') {
+      const d = Math.abs(Math.sin(p * Math.PI * 3)) * hold(p, 0.1); crouch = 0.1 * d; armR.x = -1.4 * d; armL.x = -1.4 * d; bodyPitch = 0.12 * d;
+    }
+    else if (a.name === 'crossarms') {
+      const k = hold(p); front = 0.6 * k; armR.x = -0.55 * k; foreRz = 1.75 * k; armL.x = -0.5 * k; foreLz = -1.75 * k; headRoll += 0.06 * k;
+    }
+    else if (a.name === 'wave') { const k = hold(p); front = k; armL.z = 2.3 * k; foreLz = Math.sin(p * Math.PI * 8) * 0.45 * k; headRoll -= 0.06 * k; }
+    else if (a.name === 'landsoft') { crouch = 0.07 * bump(p); armR.z = -0.5 * (1 - p); armL.z = 0.5 * (1 - p); }
+    else if (a.name === 'land') { spin = ease(Math.min(p / 0.6, 1)) * Math.PI * 2; crouch = 0.05 * bump(p); armR.z = -1.2 * (1 - p); armL.z = 1.2 * (1 - p); }
+    if (p >= 1) { S.action = null; if (S.queue.length) start(S.queue.shift()); }
+  }
+  const cable = document.getElementById('cable');
+  if (S.fly) {                                             // ODM gear: fired cable, body flat, blades trailing
+    const f = S.fly; f.t += dt; const p = f.t / f.dur;
+    if (f.kind === 'jump') {                               // plain leap onto something: knees up, arms back
+      const k = hold(p, 0.2); legs = 0.75 * k; armR.x = 0.5 * k; armL.x = 0.5 * k; armR.z = -0.5 * k; armL.z = 0.5 * k;
+      bodyPitch = 0.22 * k; headPitch = -0.15 * k; headYaw = 0; hop = 0; cable.style.opacity = 0;
+      if (p >= 1) { S.fly = null; start('landsoft'); }
+    } else {
+    flyK = hold(p, 0.18);
+    bodyPitch = 1.05 * flyK; armR.x = 0.9 * flyK; armL.x = 0.9 * flyK; armR.z = -0.5 * flyK; armL.z = 0.5 * flyK;
+    legR = 0.45 * flyK; legL = 0.3 * flyK; kneeR = 0.5 * flyK; headPitch = -0.6 * flyK; headYaw = 0; spin = 0; hop = 0;
+    cable.style.opacity = Math.max(0, 1 - p * 1.6);
+    cable.style.transform = `rotate(${f.dir < 0 ? -150 : -30}deg)`;
+    if (p >= 1) { S.fly = null; start('land'); }
+    }
+  } else cable.style.opacity = 0;
+  if (walking) {                                           // walk cycle, driven by the window moving
+    S.phase += dt * (6 + 4 * S.rate);
+    const sw = Math.sin(S.phase), amp = 0.5 + 0.15 * S.rate;
+    legR = -amp * sw; legL = amp * sw; kneeR = 0.7 * Math.max(0, -Math.cos(S.phase)); kneeL = 0.7 * Math.max(0, Math.cos(S.phase));
+    armR.x += 0.22 * sw; armL.x -= 0.22 * sw; hop = Math.abs(Math.cos(S.phase)) * 0.02; lean = S.walk * -0.03;
+    bodyPitch = 0.05 * S.rate; headYaw = -S.walk * 0.45 + S.look.x * 0.2; headPitch = S.look.y * 0.15;
+  }
+
+  // ---- apply: the whole body turns part of the way, the head does the rest
+  const yawTarget = S.fly ? S.fly.dir * (S.fly.kind === 'jump' ? 0.9 : 1.25) : walking ? S.walk * 1.05 : (m === 'sleep' ? 0 : S.look.x * 0.45 * (1 - front));
+  S.yaw += (yawTarget - S.yaw) * Math.min(1, dt * (S.fly ? 14 : front > 0 ? 8 : 3.5));
+  root.rotation.set(bodyPitch, S.yaw + spin + twist, lean, 'YXZ');
+  if (flyK > 0) {                                          // pivot about the waist so she stays in frame
+    const c = new THREE.Vector3(0, 0.5, 0).applyEuler(root.rotation);
+    root.position.set(-c.x, 0.5 - c.y + 0.12 * flyK, -c.z);
+  } else root.position.set(0, hop - crouch, 0);
+  const set = (bone, x, y, z) => { if (bone) bone.rotation.set(x, y, z); };
+  set(B.head, headPitch, headYaw, headRoll);
+  set(B.neck, headPitch * 0.25, headYaw * 0.25, 0);
+  set(B.chest, breathe * 0.014, headYaw * 0.15, 0);
+  if (scarfBone) {                                         // pulled up when she tends it, trails when she moves
+    const wind = S.fly ? 0.3 : walking ? 0.1 + 0.1 * S.rate : 0;
+    scarfBone.position.set(scarfRest.x, scarfRest.y + 0.035 * scarfLift, scarfRest.z + 0.01 * scarfLift);
+    scarfBone.rotation.set(-0.1 * scarfLift - wind, 0, Math.sin(t * 1.7) * 0.02 + Math.sin(t * 9) * 0.03 * wind);
+  }
+  set(B.rightUpperArm, armR.x, 0, armR.z); set(B.leftUpperArm, armL.x, 0, armL.z);
+  set(B.rightLowerArm, foreR, 0, foreRz); set(B.leftLowerArm, foreL, 0, foreLz);
+  legs += crouch * 9;
+  set(B.rightUpperLeg, -0.5 * legs + legR, 0, 0); set(B.leftUpperLeg, -0.5 * legs + legL, 0, 0);
+  set(B.rightLowerLeg, 0.9 * legs + kneeR, 0, 0); set(B.leftLowerLeg, 0.9 * legs + kneeL, 0, 0);
+  if (vrm) vrm.update(dt);
+  const sc = Math.max(0.55, 1 - hop * 3.5);
+  shadow.style.transform = `scale(${sc})`; shadow.style.opacity = sc;
+  renderer.render(scene, camera);
+}
+tick();
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);
+});
+addEventListener('contextmenu', (e) => e.preventDefault());
+</script>
+</body>
+</html>

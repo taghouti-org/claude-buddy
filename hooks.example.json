@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "$HOME/.local/share/claude-buddy/hook.sh", "timeout": 3 }] }],
+    "PreToolUse": [{ "hooks": [{ "type": "command", "command": "$HOME/.local/share/claude-buddy/hook.sh", "timeout": 3 }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "$HOME/.local/share/claude-buddy/hook.sh", "timeout": 3 }] }],
+    "Notification": [{ "hooks": [{ "type": "command", "command": "$HOME/.local/share/claude-buddy/hook.sh", "timeout": 3 }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "$HOME/.local/share/claude-buddy/hook.sh", "timeout": 3 }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "$HOME/.local/share/claude-buddy/hook.sh", "timeout": 3 }] }]
+  }
+}
